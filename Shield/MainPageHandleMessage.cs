@@ -1063,6 +1063,23 @@ namespace Shield
             });
         }
 
+        public async void SpeakDebug(string text)
+        {
+            var service = new Speech();
+
+            await dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
+            {
+                try
+                {
+                    service.SpeakDebug(player, text);
+                }
+                catch (Exception e)
+                {
+                    //nothing
+                }
+            });
+        }
+
         private async void Speak(SpeechMessage speech)
         {
             var service = new Speech();

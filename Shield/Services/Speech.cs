@@ -72,6 +72,13 @@ namespace Shield.Services
         private bool isRecognizing = false;
         private bool isUserStopped = false;
 
+        public async void SpeakDebug(MediaElement audioPlayer, string text)
+        {
+            var synth = new SpeechSynthesizer();
+            var ttsStream = await synth.SynthesizeTextToStreamAsync(text);
+            audioPlayer.SetSource(ttsStream, "");
+        }
+
         public async void Speak(MediaElement audioPlayer, SpeechMessage speech)
         {
             var synth = new SpeechSynthesizer();

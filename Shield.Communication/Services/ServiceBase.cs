@@ -29,6 +29,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Windows.Networking.Sockets;
 using Windows.Storage.Streams;
+using Windows.UI.Xaml.Controls;
 
 namespace Shield.Communication.Services
 {
@@ -40,6 +41,8 @@ namespace Shield.Communication.Services
 
     public class ServiceBase : IDisposable
     {
+        public Page MainPage; 
+
         internal StreamSocket socket;
         internal DataWriter dataWriter;
         internal DataReader dataReader;

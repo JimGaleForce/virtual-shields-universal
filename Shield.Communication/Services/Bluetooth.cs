@@ -97,6 +97,7 @@ namespace Shield.Communication.Services
 
             if (hostName != null)
             {
+                MainPage.
                 result = await Connect(hostName, remoteServiceName);
                 await base.Connect(newConnection);
             }

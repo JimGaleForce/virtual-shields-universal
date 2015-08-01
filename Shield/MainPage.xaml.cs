@@ -130,6 +130,7 @@ namespace Shield
             if (appSettings.ConnectionIndex == 0)
             {
                 service = services.ContainsKey("Bluetooth") ? services["Bluetooth"] : new Bluetooth();
+                service.MainPage = this;
                 services["Bluetooth"] = service;
             }
             else
