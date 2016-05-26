@@ -34,5 +34,12 @@ namespace Shield.Communication
         public string DisplayName { get; set; }
 
         public object Source { get; set; }
+        public CommSource CommSource { get; set; }
+    }
+
+    public enum CommSource
+    {
+        Bluetooth,
+        BLE
     }
 }

@@ -21,6 +21,9 @@
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
     THE SOFTWARE.
 */
+
+using Windows.Devices.Bluetooth;
+
 namespace Shield.Communication.Services
 {
     using System;
@@ -56,7 +59,20 @@ namespace Shield.Communication.Services
                 var connections = new Connections();
                 foreach (var peer in peers)
                 {
-                    connections.Add(new Connection(peer.Name, peer));
+                    connections.Add(new Connection(peer.Name, peer) {CommSource = CommSource.Bluetooth});
+                }
+
+                var bleDevices = BluetoothLEDevice.GetDeviceSelector();
+
+                //var bleDevices = Windows.Devices.Bluetooth.GenericAttributeProfile.GattDeviceService.
+                //    GetDeviceSelectorFromUuid(
+                //    Windows.Devices.Bluetooth.GenericAttributeProfile.GattServiceUuids.GenericAccess);
+
+                peers = await DeviceInformation.FindAllAsync(bleDevices);
+
+                foreach( var peer in peers )
+                {
+                    connections.Add(new Connection(peer.Name+" (BLE)", peer) { CommSource = CommSource.BLE });
                 }
 
                 return connections;
@@ -87,14 +103,41 @@ namespace Shield.Communication.Services
                     var deviceInfo = newConnection.Source as DeviceInformation;
                     if( deviceInfo != null )
                     {
-                        var service = await RfcommDeviceService.FromIdAsync(deviceInfo.Id);
-                        if( service == null )
+                        switch (newConnection.CommSource)
                         {
-                            return false;
-                        }
+                            case CommSource.Bluetooth:
+                            {
+                                var service = await RfcommDeviceService.FromIdAsync(deviceInfo.Id);
+                                if( service == null )
+                                {
+                                    return false;
+                                }
 
-                        hostName = service.ConnectionHostName;
-                        remoteServiceName = service.ConnectionServiceName;
+                                hostName = service.ConnectionHostName;
+                                remoteServiceName = service.ConnectionServiceName;
+                                break;
+                            }
+                            case CommSource.BLE:
+                            {
+
+                                    var deviceID = deviceInfo.Id;
+                                    //var service = await RfcommDeviceService.FromIdAsync(deviceID);
+                                    var bleDevice = await BluetoothLEDevice.FromIdAsync(deviceID);
+
+                                    var i = 0;
+
+                                    if( bleDevice == null )
+                                    {
+                                        return false;
+                                    }
+
+                                   // hostName = bleDevice.HostName;
+                                //remoteServiceName = "1"; // bleDevice.RfcommServices[0].ConnectionServiceName;
+
+
+                                break;
+                                }
+                        }
                     }
                 }
 
