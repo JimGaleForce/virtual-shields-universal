@@ -25,16 +25,18 @@ namespace Shield.Communication
 {
     public class Connection
     {
-        public Connection(string displayName, object source)
+        public Connection(string displayName, object source, object service = null)
         {
             this.DisplayName = displayName;
             this.Source = source;
+            this.Service = service;
         }
 
         public string DisplayName { get; set; }
 
         public object Source { get; set; }
         public CommSource CommSource { get; set; }
+        public object Service { get; set; }
     }
 
     public enum CommSource

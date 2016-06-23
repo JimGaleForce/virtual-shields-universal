@@ -22,7 +22,13 @@
     THE SOFTWARE.
 */
 
+using System.ComponentModel;
+using System.Linq;
+using System.Runtime.InteropServices.WindowsRuntime;
 using Windows.Devices.Bluetooth;
+using Windows.Devices.Bluetooth.GenericAttributeProfile;
+using Windows.Foundation;
+using Windows.Storage.Streams;
 
 namespace Shield.Communication.Services
 {
@@ -72,7 +78,18 @@ namespace Shield.Communication.Services
 
                 foreach( var peer in peers )
                 {
-                    connections.Add(new Connection(peer.Name+" (BLE)", peer) { CommSource = CommSource.BLE });
+                    var bleDevice = await BluetoothLEDevice.FromIdAsync(peer.Id);
+                    var services = bleDevice.GattServices.Where(s => !s.Uuid.ToString().StartsWith("000018"));
+
+                    var count = 1;
+                    foreach (var gattDeviceService in services)
+                    {
+                        var serviceName = services.Count() > 1
+                            ? "-" + count++
+                            : string.Empty;
+                        connections.Add(new Connection(peer.Name + " (BLE"+serviceName+")", peer, gattDeviceService)
+                            { CommSource = CommSource.BLE });
+                    }
                 }
 
                 return connections;
@@ -106,7 +123,6 @@ namespace Shield.Communication.Services
                         switch (newConnection.CommSource)
                         {
                             case CommSource.Bluetooth:
-                            {
                                 var service = await RfcommDeviceService.FromIdAsync(deviceInfo.Id);
                                 if( service == null )
                                 {
@@ -116,27 +132,49 @@ namespace Shield.Communication.Services
                                 hostName = service.ConnectionHostName;
                                 remoteServiceName = service.ConnectionServiceName;
                                 break;
-                            }
+
                             case CommSource.BLE:
-                            {
+                                var deviceID = deviceInfo.Id;
 
-                                    var deviceID = deviceInfo.Id;
-                                    //var service = await RfcommDeviceService.FromIdAsync(deviceID);
-                                    var bleDevice = await BluetoothLEDevice.FromIdAsync(deviceID);
+                                var gattService = newConnection.Service as GattDeviceService;
 
-                                    var i = 0;
+                                if (gattService == null)
+                                {
+                                    return false;
+                                }
+            
+                                var bleDevice = await BluetoothLEDevice.FromIdAsync(deviceID);
+                                //var bleDevice2 = await BluetoothLEDevice.FromBluetoothAddressAsync(0x984fee0cf90a);
 
-                                    if( bleDevice == null )
-                                    {
-                                        return false;
-                                    }
+                                var sendCharacteristics = gattService.GetAllCharacteristics()
+                                    .Where(
+                                        c =>
+                                            c.CharacteristicProperties.HasFlag(
+                                                GattCharacteristicProperties.WriteWithoutResponse) ||
+                                            c.CharacteristicProperties.HasFlag(GattCharacteristicProperties.Write));
 
-                                   // hostName = bleDevice.HostName;
+                                var receiveCharacteristics = gattService.GetAllCharacteristics()
+                                    .Where(
+                                        c =>
+                                            c.CharacteristicProperties.HasFlag(GattCharacteristicProperties.Notify) ||
+                                            c.CharacteristicProperties.HasFlag(GattCharacteristicProperties.Read));
+
+                                if( bleDevice == null )
+                                {
+                                    return false;
+                                }
+
+                                // hostName = bleDevice.HostName;
                                 //remoteServiceName = "1"; // bleDevice.RfcommServices[0].ConnectionServiceName;
 
+                                var input = receiveCharacteristics.First();
+                                var output = sendCharacteristics.First();
 
-                                break;
-                                }
+                                this.InstrumentSocket(new CharacteristicInputStream(input),
+                                    new CharacteristicOutputStream(output));
+
+                                await base.Connect(newConnection);
+                                return true;
                         }
                     }
                 }
@@ -183,6 +221,105 @@ namespace Shield.Communication.Services
             }
 
             return true;
+        }
+    }
+
+    public class CharacteristicInputStream : IInputStream
+    {
+        private GattCharacteristic characteristic;
+
+        public CharacteristicInputStream(GattCharacteristic characteristic)
+        {
+            this.characteristic = characteristic;
+        }
+
+        public void Dispose()
+        {
+            throw new NotImplementedException();
+        }
+
+        public IAsyncOperationWithProgress<IBuffer, uint> ReadAsync(IBuffer buffer, uint count, InputStreamOptions options)
+        {
+            if (buffer == null)
+            {
+                //throw new ArgumentNullException(nameof(buffer));
+            }
+
+            Func<CancellationToken, IProgress<uint>, Task<IBuffer>> operation = 
+                (token, progress) => ReadBytesAsync(buffer, count, token, progress, options);
+
+            return AsyncInfo.Run(operation);
+        }
+
+        private async Task<IBuffer> ReadBytesAsync(IBuffer buffer, uint count, CancellationToken token,
+            IProgress<uint> progress, InputStreamOptions options)
+        {
+            var isExpectingData = count > 0;
+            uint received = 0;
+            while ( isExpectingData )
+            {
+                var result = await characteristic.ReadValueAsync();
+                if (result.Value.Length > 0)
+                {
+                    var data = result.Value.ToArray();
+                    buffer.AsStream().Write(result.Value.ToArray(), 0, (int) result.Value.Length);
+                }
+
+                received += result.Value.Length;
+                isExpectingData = result.Value.Length >= count && !token.IsCancellationRequested;
+
+                progress.Report(Math.Min(100, received/count));
+            }
+
+            return buffer;
+        }
+    }
+
+    public class CharacteristicOutputStream : IOutputStream
+    {
+        private GattCharacteristic characteristic;
+
+        public CharacteristicOutputStream( GattCharacteristic characteristic )
+        {
+            this.characteristic = characteristic;
+        }
+
+        public void Dispose()
+        {
+            //throw new NotImplementedException();
+        }
+
+
+        private async Task<uint> WriteBytesAsync( CancellationToken token, IProgress<uint> progress, IBuffer buffer )
+        {
+            var result = await characteristic.WriteValueAsync(buffer);
+            progress.Report(100);
+            return buffer.Length;
+        }
+
+
+        public IAsyncOperationWithProgress<uint, uint> WriteAsync( IBuffer buffer )
+        {
+            if( buffer == null )
+            {
+                throw new ArgumentNullException(nameof(buffer));
+            }
+
+            Func<CancellationToken, IProgress<uint>, Task<uint>> operation =
+               (token, progress) => WriteBytesAsync(token, progress, buffer);
+
+            return AsyncInfo.Run(operation);
+        }
+
+        private async Task<bool> True()
+        {
+            return true;
+        }
+
+        public IAsyncOperation<bool> FlushAsync()
+        {
+            Func<CancellationToken, Task<bool>> operation = (token) => True();
+            return AsyncInfo.Run(operation);
         }
     }
 }

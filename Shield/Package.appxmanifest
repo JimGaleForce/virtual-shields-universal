@@ -31,11 +31,7 @@
     <DeviceCapability Name="location" />
     <DeviceCapability Name="proximity" />
     <DeviceCapability Name="webcam" />
-    <DeviceCapability Name="bluetooth.rfcomm">
-      <Device Id="any">
-        <Function Type="name:serialPort" />
-      </Device>
-    </DeviceCapability>
+    <DeviceCapability Name="bluetooth" />
     <DeviceCapability Name="serialcommunication">
       <Device Id="any">
         <Function Type="name:serialPort" />
