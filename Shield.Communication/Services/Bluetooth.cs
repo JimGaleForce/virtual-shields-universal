@@ -23,6 +23,7 @@
 */
 
 using System.ComponentModel;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices.WindowsRuntime;
 using Windows.Devices.Bluetooth;
@@ -79,11 +80,40 @@ namespace Shield.Communication.Services
                 foreach( var peer in peers )
                 {
                     var bleDevice = await BluetoothLEDevice.FromIdAsync(peer.Id);
+
+                    if (bleDevice == null)
+                    {
+                        continue;
+                    }
+
                     var services = bleDevice.GattServices.Where(s => !s.Uuid.ToString().StartsWith("000018"));
+
+                    if (!services.Any())
+                    {
+                        continue;
+                    }
 
                     var count = 1;
                     foreach (var gattDeviceService in services)
                     {
+                        var sendCharacteristics = gattDeviceService.GetAllCharacteristics()
+                        .FirstOrDefault(
+                            c =>
+                                c.CharacteristicProperties.HasFlag(
+                                    GattCharacteristicProperties.WriteWithoutResponse) ||
+                                c.CharacteristicProperties.HasFlag(GattCharacteristicProperties.Write));
+
+                        var receiveCharacteristics = gattDeviceService.GetAllCharacteristics()
+                            .FirstOrDefault(
+                                c =>
+                                    c.CharacteristicProperties.HasFlag(GattCharacteristicProperties.Notify) ||
+                                    c.CharacteristicProperties.HasFlag(GattCharacteristicProperties.Read));
+
+                        if (sendCharacteristics == null || receiveCharacteristics == null)
+                        {
+                            continue;
+                        }
+
                         var serviceName = services.Count() > 1
                             ? "-" + count++
                             : string.Empty;
@@ -146,20 +176,20 @@ namespace Shield.Communication.Services
                                 var bleDevice = await BluetoothLEDevice.FromIdAsync(deviceID);
                                 //var bleDevice2 = await BluetoothLEDevice.FromBluetoothAddressAsync(0x984fee0cf90a);
 
-                                var sendCharacteristics = gattService.GetAllCharacteristics()
-                                    .Where(
+                                var sendCharacteristic = gattService.GetAllCharacteristics()
+                                    .FirstOrDefault(
                                         c =>
                                             c.CharacteristicProperties.HasFlag(
                                                 GattCharacteristicProperties.WriteWithoutResponse) ||
                                             c.CharacteristicProperties.HasFlag(GattCharacteristicProperties.Write));
 
-                                var receiveCharacteristics = gattService.GetAllCharacteristics()
-                                    .Where(
+                                var receiveCharacteristic = gattService.GetAllCharacteristics()
+                                    .FirstOrDefault(
                                         c =>
                                             c.CharacteristicProperties.HasFlag(GattCharacteristicProperties.Notify) ||
                                             c.CharacteristicProperties.HasFlag(GattCharacteristicProperties.Read));
 
-                                if( bleDevice == null )
+                                if( bleDevice == null || sendCharacteristic == null || receiveCharacteristic == null)
                                 {
                                     return false;
                                 }
@@ -167,10 +197,12 @@ namespace Shield.Communication.Services
                                 // hostName = bleDevice.HostName;
                                 //remoteServiceName = "1"; // bleDevice.RfcommServices[0].ConnectionServiceName;
 
-                                var input = receiveCharacteristics.First();
-                                var output = sendCharacteristics.First();
+                                var input = receiveCharacteristic;
+                                var output = sendCharacteristic;
 
-                                this.InstrumentSocket(new CharacteristicInputStream(input),
+                                var inputStream = new CharacteristicInputStream(input);
+                                await inputStream.Start();
+                                this.InstrumentSocket(inputStream,
                                     new CharacteristicOutputStream(output));
 
                                 await base.Connect(newConnection);
@@ -227,22 +259,35 @@ namespace Shield.Communication.Services
     public class CharacteristicInputStream : IInputStream
     {
         private GattCharacteristic characteristic;
+        private MemoryStream stream = new MemoryStream(4*1024);
 
         public CharacteristicInputStream(GattCharacteristic characteristic)
         {
             this.characteristic = characteristic;
         }
 
+        public async Task Start()
+        {
+            await characteristic.WriteClientCharacteristicConfigurationDescriptorAsync(GattClientCharacteristicConfigurationDescriptorValue.Notify);
+            characteristic.ValueChanged += TXCharacteristic_ValueChanged;
+        }
+
+        private void TXCharacteristic_ValueChanged( GattCharacteristic sender, GattValueChangedEventArgs args )
+        {
+            var buffer = args.CharacteristicValue.ToArray();
+            stream.Write(buffer, 0, buffer.Length);
+        }
+
         public void Dispose()
         {
-            throw new NotImplementedException();
+            this.stream.Dispose();
         }
 
         public IAsyncOperationWithProgress<IBuffer, uint> ReadAsync(IBuffer buffer, uint count, InputStreamOptions options)
         {
             if (buffer == null)
             {
-                //throw new ArgumentNullException(nameof(buffer));
+                throw new ArgumentNullException(nameof(buffer));
             }
 
             Func<CancellationToken, IProgress<uint>, Task<IBuffer>> operation = 
@@ -258,15 +303,17 @@ namespace Shield.Communication.Services
             uint received = 0;
             while ( isExpectingData )
             {
-                var result = await characteristic.ReadValueAsync();
-                if (result.Value.Length > 0)
+                var localBuffer = new byte[buffer.Capacity];
+
+                var result = await stream.ReadAsync(localBuffer, (int) received, (int) count, token);
+
+                if (result > 0)
                 {
-                    var data = result.Value.ToArray();
-                    buffer.AsStream().Write(result.Value.ToArray(), 0, (int) result.Value.Length);
+                    await buffer.AsStream().WriteAsync(localBuffer, 0, result, token);
                 }
 
-                received += result.Value.Length;
-                isExpectingData = result.Value.Length >= count && !token.IsCancellationRequested;
+                received += (uint) result;
+                isExpectingData = result >= count && !token.IsCancellationRequested;
 
                 progress.Report(Math.Min(100, received/count));
             }
